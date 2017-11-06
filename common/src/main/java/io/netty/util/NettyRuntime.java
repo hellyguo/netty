@@ -22,7 +22,10 @@ import io.netty.util.internal.SystemPropertyUtil;
 import java.util.Locale;
 
 /**
- * A utility class for wrapping calls to {@link Runtime}.
+ * A utility class for wrapping calls to {@link Runtime}.<br>
+ *
+ * 这个类就是为了获取系统的CPU核数。一般写代码是调用{@link Runtime#availableProcessors()}<br>
+ * 但是netty为了快速读取，直接用一个holder内部类对象获取了值以后做了缓存。将调用native代码改为JVM内部访问成员变量访问，速度提升。
  */
 public final class NettyRuntime {
 
