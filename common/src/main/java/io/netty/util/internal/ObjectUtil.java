@@ -15,7 +15,9 @@
 package io.netty.util.internal;
 
 /**
- * A grab-bag of useful utility methods.
+ * A grab-bag of useful utility methods.<br>
+ *
+ * 一个将大量判断集结的地方，简化代码中相关的判断代码，减少代码中的IF。
  */
 public final class ObjectUtil {
 
