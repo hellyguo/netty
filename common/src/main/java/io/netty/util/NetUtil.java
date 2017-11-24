@@ -46,7 +46,8 @@ import java.util.List;
  * <p/>
  * This class borrowed some of its methods from a  modified fork of the
  * <a href="http://svn.apache.org/repos/asf/harmony/enhanced/java/branches/java6/classlib/modules/luni/
- * src/main/java/org/apache/harmony/luni/util/Inet6Util.java">Inet6Util class</a> which was part of Apache Harmony.
+ * src/main/java/org/apache/harmony/luni/util/Inet6Util.java">Inet6Util class</a> which was part of Apache Harmony.<br>
+ * 用来处理网络接口及IP地址，支持IPV4,IPV6，IPV6还支持IPV4内嵌兼容模式
  */
 public final class NetUtil {
 
@@ -161,6 +162,7 @@ public final class NetUtil {
         LOCALHOST6 = localhost6;
 
         // Retrieve the list of available network interfaces.
+        // 这段代码的作用是从系统调用中找到的各个网卡接口中找出已经有IP地址的网卡
         List<NetworkInterface> ifaces = new ArrayList<NetworkInterface>();
         try {
             Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
@@ -168,6 +170,7 @@ public final class NetUtil {
                 while (interfaces.hasMoreElements()) {
                     NetworkInterface iface = interfaces.nextElement();
                     // Use the interface with proper INET addresses only.
+                    // 只有有明确IP的网卡，才加入
                     if (SocketUtils.addressesFromNetworkInterface(iface).hasMoreElements()) {
                         ifaces.add(iface);
                     }
@@ -306,7 +309,8 @@ public final class NetUtil {
 
     /**
      * This will execute <a href ="https://www.freebsd.org/cgi/man.cgi?sysctl(8)">sysctl</a> with the {@code sysctlKey}
-     * which is expected to return the numeric value for for {@code sysctlKey}.
+     * which is expected to return the numeric value for for {@code sysctlKey}.<br>
+     * 读取sysctl的输出结果，过滤出需要的key对应的值
      * @param sysctlKey The key which the return value corresponds to.
      * @return The <a href ="https://www.freebsd.org/cgi/man.cgi?sysctl(8)">sysctl</a> value for {@code sysctlKey}.
      */
@@ -412,7 +416,8 @@ public final class NetUtil {
     }
 
     /**
-     * Converts a 32-bit integer into an IPv4 address.
+     * Converts a 32-bit integer into an IPv4 address.<br>
+     * 专用于SOCKS4、SOCKS5协议
      */
     public static String intToIpAddress(int i) {
         StringBuilder buf = new StringBuilder(15);
@@ -445,7 +450,7 @@ public final class NetUtil {
     public static String bytesToIpAddress(byte[] bytes, int offset, int length) {
         switch (length) {
             case 4: {
-                return new StringBuilder(15)
+                return new StringBuilder(15)//容量提前设定，防止扩展内存，提高性能
                         .append(bytes[offset] & 0xff)
                         .append('.')
                         .append(bytes[offset + 1] & 0xff)
