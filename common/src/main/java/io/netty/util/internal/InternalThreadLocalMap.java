@@ -33,7 +33,8 @@ import java.util.WeakHashMap;
 /**
  * The internal data structure that stores the thread-local variables for Netty and all {@link FastThreadLocal}s.
  * Note that this class is for internal use only and is subject to change at any time.  Use {@link FastThreadLocal}
- * unless you know what you are doing.
+ * unless you know what you are doing.<br>
+ * 基于数组而不是哈希的map，提高访问速度。同时，提供一些常用对象的内置，比如{@link StringBuilder}
  */
 public final class InternalThreadLocalMap extends UnpaddedInternalThreadLocalMap {
 
@@ -117,7 +118,7 @@ public final class InternalThreadLocalMap extends UnpaddedInternalThreadLocalMap
 
     // Cache line padding (must be public)
     // With CompressedOops enabled, an instance of this class should occupy at least 128 bytes.
-    public long rp1, rp2, rp3, rp4, rp5, rp6, rp7, rp8, rp9;
+    public long rp1, rp2, rp3, rp4, rp5, rp6, rp7, rp8, rp9;//减少伪共享而填充
 
     private InternalThreadLocalMap() {
         super(newIndexedVariableTable());
@@ -177,6 +178,11 @@ public final class InternalThreadLocalMap extends UnpaddedInternalThreadLocalMap
         return count - 1;
     }
 
+    /**
+     * StringBuilder懒加载，在需要时可以使用<br>
+     * 容量默认为1024，用过后再取时，如果前次数据超过4096，容量会被重置为1024，同时数据会被清空，不影响下次使用
+     * @return StringBuilder
+     */
     public StringBuilder stringBuilder() {
         StringBuilder sb = stringBuilder;
         if (sb == null) {
@@ -303,6 +309,7 @@ public final class InternalThreadLocalMap extends UnpaddedInternalThreadLocalMap
         Object[] oldArray = indexedVariables;
         final int oldCapacity = oldArray.length;
         int newCapacity = index;
+        // 快速将数据扩大到最近的2^n次幂，用以做数组扩展
         newCapacity |= newCapacity >>>  1;
         newCapacity |= newCapacity >>>  2;
         newCapacity |= newCapacity >>>  4;

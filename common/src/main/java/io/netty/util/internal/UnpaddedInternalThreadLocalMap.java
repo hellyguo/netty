@@ -32,6 +32,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 class UnpaddedInternalThreadLocalMap {
 
+    /** 在非{@link io.netty.util.concurrent.FastThreadLocalThread}情况下，退化为使用{@link ThreadLocal} */
     static final ThreadLocal<InternalThreadLocalMap> slowThreadLocalMap = new ThreadLocal<InternalThreadLocalMap>();
     static final AtomicInteger nextIndex = new AtomicInteger();
 
@@ -39,6 +40,7 @@ class UnpaddedInternalThreadLocalMap {
     Object[] indexedVariables;
 
     // Core thread-locals
+    // 一些固定的线程本地化对象
     int futureListenerStackDepth;
     int localChannelReaderStackDepth;
     Map<Class<?>, Boolean> handlerSharableCache;
@@ -48,11 +50,13 @@ class UnpaddedInternalThreadLocalMap {
     Map<Class<?>, Map<String, TypeParameterMatcher>> typeParameterMatcherFindCache;
 
     // String-related thread-locals
+    // 字符串相关的线程本地化对象
     StringBuilder stringBuilder;
     Map<Charset, CharsetEncoder> charsetEncoderCache;
     Map<Charset, CharsetDecoder> charsetDecoderCache;
 
     // ArrayList-related thread-locals
+    // 数组列表相关的线程本地化对象
     ArrayList<Object> arrayList;
 
     UnpaddedInternalThreadLocalMap(Object[] indexedVariables) {

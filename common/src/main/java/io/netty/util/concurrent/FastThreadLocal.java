@@ -37,12 +37,15 @@ import java.util.Set;
  * a special field to store the necessary state.  An access by any other kind of thread falls back to a regular
  * {@link ThreadLocal}.
  * </p>
+ * Netty优化的ThreadLocal，基于数组，访问速度比JDK默认的{@link ThreadLocal}性能好多了<br>
+ * 但线程必须是基于{@link FastThreadLocalThread}
  *
  * @param <V> the type of the thread-local variable
  * @see ThreadLocal
  */
 public class FastThreadLocal<V> {
 
+    /** 默认初始位为内部使用位的下标，存储需要的{@link Set} */
     private static final int variablesToRemoveIndex = InternalThreadLocalMap.nextVariableIndex();
 
     /**
@@ -122,8 +125,10 @@ public class FastThreadLocal<V> {
         variablesToRemove.remove(variable);
     }
 
+    /** 在new的时候，固定一个下标。数组只会扩大，不会缩小。不能放太多线程本地数据。 */
     private final int index;
 
+    /** 在初始化时进行固定下标 */
     public FastThreadLocal() {
         index = InternalThreadLocalMap.nextVariableIndex();
     }

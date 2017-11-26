@@ -23,7 +23,9 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * A {@link ThreadFactory} implementation with a simple naming rule.
+ * A {@link ThreadFactory} implementation with a simple naming rule.<br>
+ * 线程工厂，提供一个命名规则，类似默认的pool-x-thread-y，但更易读，有含义<br>
+ * 同时，此工厂创建的线程，天然支持Netty自己构建的更高效线程化操作，基于{@link FastThreadLocal}
  */
 public class DefaultThreadFactory implements ThreadFactory {
 
@@ -76,7 +78,7 @@ public class DefaultThreadFactory implements ThreadFactory {
                 return poolName.toLowerCase(Locale.US);
             default:
                 if (Character.isUpperCase(poolName.charAt(0)) && Character.isLowerCase(poolName.charAt(1))) {
-                    return Character.toLowerCase(poolName.charAt(0)) + poolName.substring(1);
+                    return Character.toLowerCase(poolName.charAt(0)) + poolName.substring(1);//组装为驼峰命名法
                 } else {
                     return poolName;
                 }
@@ -107,15 +109,15 @@ public class DefaultThreadFactory implements ThreadFactory {
     public Thread newThread(Runnable r) {
         Thread t = newThread(new DefaultRunnableDecorator(r), prefix + nextId.incrementAndGet());
         try {
-            if (t.isDaemon() != daemon) {
+            if (t.isDaemon() != daemon) {//额外检查，不做多余动作
                 t.setDaemon(daemon);
             }
 
-            if (t.getPriority() != priority) {
+            if (t.getPriority() != priority) {//额外检查，不做多余动作
                 t.setPriority(priority);
             }
         } catch (Exception ignored) {
-            // Doesn't matter even if failed to set.
+            // Doesn't matter even if failed to set.失败也没关系
         }
         return t;
     }
@@ -124,6 +126,9 @@ public class DefaultThreadFactory implements ThreadFactory {
         return new FastThreadLocalThread(threadGroup, r, name);
     }
 
+    /**
+     * 自定义包装容器，执行额外操作{@link FastThreadLocal#removeAll}
+     */
     private static final class DefaultRunnableDecorator implements Runnable {
 
         private final Runnable r;
@@ -137,7 +142,7 @@ public class DefaultThreadFactory implements ThreadFactory {
             try {
                 r.run();
             } finally {
-                FastThreadLocal.removeAll();
+                FastThreadLocal.removeAll();//清理动作
             }
         }
     }

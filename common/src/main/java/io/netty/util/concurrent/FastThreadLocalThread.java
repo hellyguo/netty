@@ -18,7 +18,8 @@ package io.netty.util.concurrent;
 import io.netty.util.internal.InternalThreadLocalMap;
 
 /**
- * A special {@link Thread} that provides fast access to {@link FastThreadLocal} variables.
+ * A special {@link Thread} that provides fast access to {@link FastThreadLocal} variables.<br>
+ * 提供比JDK{@link ThreadLocal}更高效线程化操作的基底线程
  */
 public class FastThreadLocalThread extends Thread {
 
