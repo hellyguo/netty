@@ -37,6 +37,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * associated {@link Runnable}s.  When there is no thread to watch (i.e. all threads are dead), the daemon thread
  * will terminate itself, and a new daemon thread will be started again when a new watch is added.
  * </p>
+ * 用以监控线程，并在线程出现意外时进行一次接管。一次接管失败后，就报错放弃。<br>
+ * 一次可以监控多个线程。如果没有需要监控的，就自行退出，直至下一次被要求监控。
  */
 public final class ThreadDeathWatcher {
 
@@ -140,7 +142,7 @@ public final class ThreadDeathWatcher {
 
         @Override
         public void run() {
-            for (;;) {
+            for (;;) {//循环体周密地设想了可能发生的情况
                 fetchWatchees();
                 notifyWatchees();
 
