@@ -324,11 +324,11 @@ static jobject _recvFrom(JNIEnv* env, jint fd, void* buffer, jint pos, jint limi
     return createDatagramSocketAddress(env, &addr, res);
 }
 
-static void netty_unix_socket_getOptionHandleError(JNIEnv* env, int err) {
+void netty_unix_socket_getOptionHandleError(JNIEnv* env, int err) {
     netty_unix_socket_optionHandleError(env, err, "getsockopt() failed: ");
 }
 
-static int netty_unix_socket_getOption0(jint fd, int level, int optname, void* optval, socklen_t optlen) {
+int netty_unix_socket_getOption0(jint fd, int level, int optname, void* optval, socklen_t optlen) {
     return getsockopt(fd, level, optname, optval, &optlen);
 }
 
