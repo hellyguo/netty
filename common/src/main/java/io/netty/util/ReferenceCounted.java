@@ -28,6 +28,7 @@ package io.netty.util;
  * {@link ReferenceCounted}, the contained objects will also be released via {@link #release()} when the container's
  * reference count becomes 0.
  * </p>
+ * 接口，定义一些计数方法
  */
 public interface ReferenceCounted {
     /**
