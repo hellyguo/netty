@@ -17,7 +17,8 @@
 package io.netty.util;
 
 /**
- * @deprecated please use {@link ResourceLeakTracker} as it may lead to false-positives.
+ * @deprecated please use {@link ResourceLeakTracker} as it may lead to false-positives.<br>
+ * 会导致误报(false-positives)
  */
 @Deprecated
 public interface ResourceLeak {

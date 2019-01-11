@@ -41,10 +41,10 @@ public class ResourceLeakDetector<T> {
 
     private static final String PROP_LEVEL_OLD = "io.netty.leakDetectionLevel";
     private static final String PROP_LEVEL = "io.netty.leakDetection.level";
-    private static final Level DEFAULT_LEVEL = Level.SIMPLE;
+    private static final Level DEFAULT_LEVEL = Level.SIMPLE;//默认侦测级别
 
     private static final String PROP_TARGET_RECORDS = "io.netty.leakDetection.targetRecords";
-    private static final int DEFAULT_TARGET_RECORDS = 4;
+    private static final int DEFAULT_TARGET_RECORDS = 4;//默认发现目标对象数
 
     private static final int TARGET_RECORDS;
 
@@ -53,22 +53,26 @@ public class ResourceLeakDetector<T> {
      */
     public enum Level {
         /**
-         * Disables resource leak detection.
+         * Disables resource leak detection.<br>
+         * 禁用资源泄露侦测
          */
         DISABLED,
         /**
          * Enables simplistic sampling resource leak detection which reports there is a leak or not,
-         * at the cost of small overhead (default).
+         * at the cost of small overhead (default).<br>
+         * 最小代价侦测，最小规模抽样侦测，这是默认选项
          */
         SIMPLE,
         /**
          * Enables advanced sampling resource leak detection which reports where the leaked object was accessed
-         * recently at the cost of high overhead.
+         * recently at the cost of high overhead.<br>
+         * 高级模式，有详细报告
          */
         ADVANCED,
         /**
          * Enables paranoid resource leak detection which reports where the leaked object was accessed recently,
-         * at the cost of the highest possible overhead (for testing purposes only).
+         * at the cost of the highest possible overhead (for testing purposes only).<br>
+         * 最详尽模式，有报告
          */
         PARANOID;
 
@@ -114,6 +118,7 @@ public class ResourceLeakDetector<T> {
         levelStr = SystemPropertyUtil.get(PROP_LEVEL, levelStr);
         Level level = Level.parseLevel(levelStr);
 
+        //默认为4次，可能不够，可以调大
         TARGET_RECORDS = SystemPropertyUtil.getInt(PROP_TARGET_RECORDS, DEFAULT_TARGET_RECORDS);
 
         ResourceLeakDetector.level = level;
@@ -334,6 +339,7 @@ public class ResourceLeakDetector<T> {
     protected void reportInstancesLeak(String resourceType) {
     }
 
+    /** 该类继承{@link WeakReference} */
     @SuppressWarnings("deprecation")
     private static final class DefaultResourceLeak<T>
             extends WeakReference<Object> implements ResourceLeakTracker<T>, ResourceLeak {
