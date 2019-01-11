@@ -22,6 +22,8 @@ import io.netty.util.internal.SystemPropertyUtil;
 import io.netty.util.internal.logging.InternalLogger;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 
+import java.security.AccessController;
+import java.security.PrivilegedAction;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Queue;
@@ -39,7 +41,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * </p>
  * 用以监控线程，并在线程出现意外时进行一次接管。一次接管失败后，就报错放弃。<br>
  * 一次可以监控多个线程。如果没有需要监控的，就自行退出，直至下一次被要求监控。
+ * @deprecated will be removed in the next major release
  */
+@Deprecated
 public final class ThreadDeathWatcher {
 
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(ThreadDeathWatcher.class);
@@ -105,7 +109,20 @@ public final class ThreadDeathWatcher {
         pendingEntries.add(new Entry(thread, task, isWatch));
 
         if (started.compareAndSet(false, true)) {
-            Thread watcherThread = threadFactory.newThread(watcher);
+            final Thread watcherThread = threadFactory.newThread(watcher);
+            // Set to null to ensure we not create classloader leaks by holds a strong reference to the inherited
+            // classloader.
+            // See:
+            // - https://github.com/netty/netty/issues/7290
+            // - https://bugs.openjdk.java.net/browse/JDK-7008595
+            AccessController.doPrivileged(new PrivilegedAction<Void>() {
+                @Override
+                public Void run() {
+                    watcherThread.setContextClassLoader(null);
+                    return null;
+                }
+            });
+
             watcherThread.start();
             ThreadDeathWatcher.watcherThread = watcherThread;
         }

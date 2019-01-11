@@ -52,6 +52,26 @@ class ReadOnlyByteBufferBuf extends AbstractReferenceCountedByteBuf {
     protected void deallocate() { }
 
     @Override
+    public boolean isWritable() {
+        return false;
+    }
+
+    @Override
+    public boolean isWritable(int numBytes) {
+        return false;
+    }
+
+    @Override
+    public ByteBuf ensureWritable(int minWritableBytes) {
+        throw new ReadOnlyBufferException();
+    }
+
+    @Override
+    public int ensureWritable(int minWritableBytes, boolean force) {
+        return 1;
+    }
+
+    @Override
     public byte getByte(int index) {
         ensureAccessible();
         return _getByte(index);
@@ -335,11 +355,11 @@ class ReadOnlyByteBufferBuf extends AbstractReferenceCountedByteBuf {
         if (buffer.hasArray()) {
             out.write(buffer.array(), index + buffer.arrayOffset(), length);
         } else {
-            byte[] tmp = new byte[length];
+            byte[] tmp = ByteBufUtil.threadLocalTempArray(length);
             ByteBuffer tmpBuf = internalNioBuffer();
             tmpBuf.clear().position(index);
-            tmpBuf.get(tmp);
-            out.write(tmp);
+            tmpBuf.get(tmp, 0, length);
+            out.write(tmp, 0, length);
         }
         return this;
     }

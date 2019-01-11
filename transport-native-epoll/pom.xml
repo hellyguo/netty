@@ -19,7 +19,7 @@
   <parent>
     <groupId>io.netty</groupId>
     <artifactId>netty-parent</artifactId>
-    <version>4.1.18.Final-SNAPSHOT</version>
+    <version>4.1.33.Final-SNAPSHOT</version>
   </parent>
   <artifactId>netty-transport-native-epoll</artifactId>
 
@@ -27,6 +27,7 @@
   <packaging>jar</packaging>
 
   <properties>
+    <javaModuleName>io.netty.transport.epoll</javaModuleName>
     <!-- Needed by the native transport as we need the memoryAddress of the ByteBuffer -->
     <argLine.java9.extras>--add-exports java.base/sun.security.x509=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED</argLine.java9.extras>
     <unix.common.lib.name>netty-unix-common</unix.common.lib.name>
@@ -180,6 +181,7 @@
                     </manifest>
                     <manifestEntries>
                       <Bundle-NativeCode>META-INF/native/libnetty_transport_native_epoll_${os.detected.arch}.so; osname=Linux; processor=${os.detected.arch},*</Bundle-NativeCode>
+                      <Automatic-Module-Name>${javaModuleName}</Automatic-Module-Name>
                     </manifestEntries>
                     <index>true</index>
                     <manifestFile>${project.build.outputDirectory}/META-INF/MANIFEST.MF</manifestFile>
@@ -263,7 +265,7 @@
                   <value>${linux.sendmmsg.support}${glibc.sendmmsg.support}</value>
                   <!-- If glibc and linux kernel are both not sufficient...then define the CFLAGS -->
                   <regex>.*IO_NETTY_SENDMSSG_NOT_FOUND.*</regex>
-                  <replacement>CFLAGS=-O3 -DIO_NETTY_SENDMMSG_NOT_FOUND -Werror -fno-omit-frame-pointer -Wunused-variable -I${unix.common.include.unpacked.dir}</replacement>
+                  <replacement>CFLAGS=-O3 -DIO_NETTY_SENDMMSG_NOT_FOUND -Werror -fno-omit-frame-pointer -Wunused-variable -fvisibility=hidden -I${unix.common.include.unpacked.dir}</replacement>
                   <failIfNoMatch>false</failIfNoMatch>
                 </configuration>
               </execution>
@@ -279,7 +281,7 @@
                   <value>${jni.compiler.args.cflags}</value>
                   <!-- If glibc and linux kernel are both not sufficient...then define the CFLAGS -->
                   <regex>^((?!CFLAGS=).)*$</regex>
-                  <replacement>CFLAGS=-O3 -Werror -fno-omit-frame-pointer -Wunused-variable -I${unix.common.include.unpacked.dir}</replacement>
+                  <replacement>CFLAGS=-O3 -Werror -fno-omit-frame-pointer -Wunused-variable -fvisibility=hidden -I${unix.common.include.unpacked.dir}</replacement>
                   <failIfNoMatch>false</failIfNoMatch>
                 </configuration>
               </execution>
@@ -317,12 +319,12 @@
     </dependency>
     <dependency>
       <groupId>io.netty</groupId>
-      <artifactId>netty-transport-native-unix-common</artifactId>
+      <artifactId>netty-transport</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
       <groupId>io.netty</groupId>
-      <artifactId>netty-transport</artifactId>
+      <artifactId>netty-transport-native-unix-common</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>

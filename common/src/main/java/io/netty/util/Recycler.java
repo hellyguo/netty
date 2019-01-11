@@ -50,7 +50,7 @@ public abstract class Recycler<T> {
     };
     private static final AtomicInteger ID_GENERATOR = new AtomicInteger(Integer.MIN_VALUE);//ID生成器
     private static final int OWN_THREAD_ID = ID_GENERATOR.getAndIncrement();//拥有者标识
-    private static final int DEFAULT_INITIAL_MAX_CAPACITY_PER_THREAD = 32768; // Use 32k instances as default.
+    private static final int DEFAULT_INITIAL_MAX_CAPACITY_PER_THREAD = 4 * 1024; // Use 4k instances as default.
     private static final int DEFAULT_MAX_CAPACITY_PER_THREAD;
     private static final int INITIAL_CAPACITY;
     private static final int MAX_SHARED_CAPACITY_FACTOR;
@@ -116,6 +116,16 @@ public abstract class Recycler<T> {
         protected Stack<T> initialValue() {
             return new Stack<T>(Recycler.this, Thread.currentThread(), maxCapacityPerThread, maxSharedCapacityFactor,
                     ratioMask, maxDelayedQueuesPerThread);
+        }
+
+        @Override
+        protected void onRemoval(Stack<T> value) {
+            // Let us remove the WeakOrderQueue from the WeakHashMap directly if its safe to remove some overhead
+            if (value.threadRef.get() == Thread.currentThread()) {
+               if (DELAYED_RECYCLED.isSet()) {
+                   DELAYED_RECYCLED.get().remove(value);
+               }
+            }
         }
     };
 
@@ -213,6 +223,12 @@ public abstract class Recycler<T> {
             if (object != value) {//只有持有对象句柄的才能进行回收
                 throw new IllegalArgumentException("object does not belong to handle");
             }
+
+            Stack<?> stack = this.stack;
+            if (lastRecycledId != recycleId || stack == null) {
+                throw new IllegalStateException("recycled already");
+            }
+
             stack.push(this);//推入栈中，供下一次调用
         }
     }
@@ -235,38 +251,91 @@ public abstract class Recycler<T> {
         // Let Link extend AtomicInteger for intrinsics. The Link itself will be used as writerIndex.
         /** 基于{@link AtomicInteger}，自身是写入索引，额外增加了读取索引readIndex */
         @SuppressWarnings("serial")
-        private static final class Link extends AtomicInteger {
+        static final class Link extends AtomicInteger {
             private final DefaultHandle<?>[] elements = new DefaultHandle[LINK_CAPACITY];//处理器数组，默认大小是16
 
             private int readIndex;
-            private Link next;
+            Link next;
         }
 
-        // chain of data items
-        private Link head, tail;
+        // This act as a place holder for the head Link but also will reclaim space once finalized.
+        // Its important this does not hold any reference to either Stack or WeakOrderQueue.
+        static final class Head {
+            private final AtomicInteger availableSharedCapacity;
+
+            Link link;
+
+            Head(AtomicInteger availableSharedCapacity) {
+                this.availableSharedCapacity = availableSharedCapacity;
+            }
+
+            /// TODO: In the future when we move to Java9+ we should use java.lang.ref.Cleaner.
+            @Override
+            protected void finalize() throws Throwable {
+                try {
+                    super.finalize();
+                } finally {
+                    Link head = link;
+                    link = null;
+                    while (head != null) {
+                        reclaimSpace(LINK_CAPACITY);
+                        Link next = head.next;
+                        // Unlink to help GC and guard against GC nepotism.
+                        head.next = null;
+                        head = next;
+                    }
+                }
+            }
+
+            void reclaimSpace(int space) {
+                assert space >= 0;
+                availableSharedCapacity.addAndGet(space);
+            }
+
+            boolean reserveSpace(int space) {
+                return reserveSpace(availableSharedCapacity, space);
+            }
+
+        /** 锁定空间，看stack中是否还有剩余空间，不够报失败，够就一下减下 */
+            static boolean reserveSpace(AtomicInteger availableSharedCapacity, int space) {
+                assert space >= 0;
+                for (;;) {
+                    int available = availableSharedCapacity.get();
+                    if (available < space) {
+                        return false;
+                    }
+                if (availableSharedCapacity.compareAndSet(available, available - space)) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        private final Head head;
+        private Link tail;
         // pointer to another queue of delayed items for the same stack
         private WeakOrderQueue next;
-        private final WeakReference<Thread> owner;//拥有者线程的弱引用
-        private final int id = ID_GENERATOR.getAndIncrement();//每一个QUEUE分配一个ID
-        private final AtomicInteger availableSharedCapacity;
+        private final WeakReference<Thread> owner;
+        private final int id = ID_GENERATOR.getAndIncrement();
 
         private WeakOrderQueue() {
             owner = null;
-            availableSharedCapacity = null;
+            head = new Head(null);
         }
 
         private WeakOrderQueue(Stack<?> stack, Thread thread) {
-            head = tail = new Link();
-            owner = new WeakReference<Thread>(thread);
+            tail = new Link();
 
             // Its important that we not store the Stack itself in the WeakOrderQueue as the Stack also is used in
             // the WeakHashMap as key. So just store the enclosed AtomicInteger which should allow to have the
             // Stack itself GCed.
-            availableSharedCapacity = stack.availableSharedCapacity;//指向stack的同一对象
+            head = new Head(stack.availableSharedCapacity);
+            head.link = tail;
+            owner = new WeakReference<Thread>(thread);
         }
 
         static WeakOrderQueue newQueue(Stack<?> stack, Thread thread) {
-            WeakOrderQueue queue = new WeakOrderQueue(stack, thread);
+            final WeakOrderQueue queue = new WeakOrderQueue(stack, thread);
             // Done outside of the constructor to ensure WeakOrderQueue.this does not escape the constructor and so
             // may be accessed while its still constructed.
             stack.setHead(queue);
@@ -274,7 +343,7 @@ public abstract class Recycler<T> {
         }
 
         private void setNext(WeakOrderQueue next) {
-            assert next != this;//确保没有循环指向
+            assert next != this;
             this.next = next;
         }
 
@@ -283,38 +352,17 @@ public abstract class Recycler<T> {
          */
         static WeakOrderQueue allocate(Stack<?> stack, Thread thread) {
             // We allocated a Link so reserve the space
-            return reserveSpace(stack.availableSharedCapacity, LINK_CAPACITY)
-                    ? WeakOrderQueue.newQueue(stack, thread) : null;
+            return Head.reserveSpace(stack.availableSharedCapacity, LINK_CAPACITY)
+                    ? newQueue(stack, thread) : null;
         }
 
-        /** 锁定空间，看stack中是否还有剩余空间，不够报失败，够就一下减下 */
-        private static boolean reserveSpace(AtomicInteger availableSharedCapacity, int space) {
-            assert space >= 0;
-            for (;;) {
-                int available = availableSharedCapacity.get();
-                if (available < space) {
-                    return false;
-                }
-                if (availableSharedCapacity.compareAndSet(available, available - space)) {//availableSharedCapacity只在这里减小
-                    return true;
-                }
-            }
-        }
-
-        /** 回收空间 */
-        private void reclaimSpace(int space) {
-            assert space >= 0;
-            availableSharedCapacity.addAndGet(space);//availableSharedCapacity复增
-        }
-
-        /** 非拥有者线程回收，加入待回收队列 */
         void add(DefaultHandle<?> handle) {
             handle.lastRecycledId = id;//标记为非拥有者回收
 
             Link tail = this.tail;
             int writeIndex;
             if ((writeIndex = tail.get()) == LINK_CAPACITY) {//触及上限，默认是16
-                if (!reserveSpace(availableSharedCapacity, LINK_CAPACITY)) {
+                if (!head.reserveSpace(LINK_CAPACITY)) {
                     // Drop it.
                     return;
                 }
@@ -339,7 +387,7 @@ public abstract class Recycler<T> {
         // transfer as many items as we can from this queue to the stack, returning true if any were transferred
         @SuppressWarnings("rawtypes")
         boolean transfer(Stack<?> dst) {
-            Link head = this.head;
+            Link head = this.head.link;
             if (head == null) {
                 return false;
             }
@@ -348,7 +396,7 @@ public abstract class Recycler<T> {
                 if (head.next == null) {//没有下一个，结束
                     return false;
                 }
-                this.head = head = head.next;//指向下一个，读总是落后于写，所以可以这样
+                this.head.link = head = head.next;
             }
 
             final int srcStart = head.readIndex;//未读起点
@@ -389,9 +437,8 @@ public abstract class Recycler<T> {
 
                 if (srcEnd == LINK_CAPACITY && head.next != null) {
                     // Add capacity back as the Link is GCed.
-                    reclaimSpace(LINK_CAPACITY);
-
-                    this.head = head.next;
+                    this.head.reclaimSpace(LINK_CAPACITY);
+                    this.head.link = head.next;
                 }
 
                 head.readIndex = srcEnd;
@@ -405,23 +452,6 @@ public abstract class Recycler<T> {
                 return false;
             }
         }
-
-        @Override
-        protected void finalize() throws Throwable {
-            try {
-                super.finalize();
-            } finally {
-                // We need to reclaim all space that was reserved by this WeakOrderQueue so we not run out of space in
-                // the stack. This is needed as we not have a good life-time control over the queue as it is used in a
-                // WeakHashMap which will drop it at any time.
-                // 不得已而为之的操作，通过这个方法来回收，不然availableSharedCapacity不会还原
-                Link link = head;
-                while (link != null) {
-                    reclaimSpace(LINK_CAPACITY);
-                    link = link.next;
-                }
-            }
-        }
     }
 
     /** 栈，主要数据结构之一 */
@@ -432,7 +462,14 @@ public abstract class Recycler<T> {
         // to scavenge those that can be reused. this permits us to incur minimal thread synchronisation whilst
         // still recycling all items.
         final Recycler<T> parent;
-        final Thread thread;
+
+        // We store the Thread in a WeakReference as otherwise we may be the only ones that still hold a strong
+        // Reference to the Thread itself after it died because DefaultHandle will hold a reference to the Stack.
+        //
+        // The biggest issue is if we do not use a WeakReference the Thread may not be able to be collected at all if
+        // the user will store a reference to the DefaultHandle somewhere and never clear this reference (or not clear
+        // it in a timely manner).
+        final WeakReference<Thread> threadRef;
         final AtomicInteger availableSharedCapacity;
         final int maxDelayedQueues;
 
@@ -447,7 +484,7 @@ public abstract class Recycler<T> {
         Stack(Recycler<T> parent, Thread thread, int maxCapacity, int maxSharedCapacityFactor,
               int ratioMask, int maxDelayedQueues) {
             this.parent = parent;//反向父句柄
-            this.thread = thread;//线程句柄
+            threadRef = new WeakReference<Thread>(thread);
             this.maxCapacity = maxCapacity;//容量
             availableSharedCapacity = new AtomicInteger(max(maxCapacity / maxSharedCapacityFactor, LINK_CAPACITY));//可放Queue中共享回收的最大数
             elements = new DefaultHandle[min(INITIAL_CAPACITY, maxCapacity)];//数据存储数组
@@ -564,11 +601,12 @@ public abstract class Recycler<T> {
 
         void push(DefaultHandle<?> item) {
             Thread currentThread = Thread.currentThread();
-            if (thread == currentThread) {//同线程调用，直接处理
+            if (threadRef.get() == currentThread) {//同线程调用，直接处理
                 // The current Thread is the thread that belongs to the Stack, we can try to push the object now.
                 pushNow(item);
             } else {//不同线程调用，放入待处理队列，延后处理
-                // The current Thread is not the one that belongs to the Stack, we need to signal that the push
+                // The current Thread is not the one that belongs to the Stack
+                // (or the Thread that belonged to the Stack was collected already), we need to signal that the push
                 // happens later.
                 pushLater(item, currentThread);
             }

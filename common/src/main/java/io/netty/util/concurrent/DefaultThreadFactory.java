@@ -107,7 +107,7 @@ public class DefaultThreadFactory implements ThreadFactory {
 
     @Override
     public Thread newThread(Runnable r) {
-        Thread t = newThread(new DefaultRunnableDecorator(r), prefix + nextId.incrementAndGet());
+        Thread t = newThread(FastThreadLocalRunnable.wrap(r), prefix + nextId.incrementAndGet());
         try {
             if (t.isDaemon() != daemon) {//额外检查，不做多余动作
                 t.setDaemon(daemon);
@@ -124,26 +124,5 @@ public class DefaultThreadFactory implements ThreadFactory {
 
     protected Thread newThread(Runnable r, String name) {
         return new FastThreadLocalThread(threadGroup, r, name);
-    }
-
-    /**
-     * 自定义包装容器，执行额外操作{@link FastThreadLocal#removeAll}
-     */
-    private static final class DefaultRunnableDecorator implements Runnable {
-
-        private final Runnable r;
-
-        DefaultRunnableDecorator(Runnable r) {
-            this.r = r;
-        }
-
-        @Override
-        public void run() {
-            try {
-                r.run();
-            } finally {
-                FastThreadLocal.removeAll();//清理动作
-            }
-        }
     }
 }

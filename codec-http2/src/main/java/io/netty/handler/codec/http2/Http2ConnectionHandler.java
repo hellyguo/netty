@@ -200,9 +200,9 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
             encoder.flowController().writePendingBytes();
             ctx.flush();
         } catch (Http2Exception e) {
-            onError(ctx, e);
+            onError(ctx, true, e);
         } catch (Throwable cause) {
-            onError(ctx, connectionError(INTERNAL_ERROR, cause, "Error flushing"));
+            onError(ctx, true, connectionError(INTERNAL_ERROR, cause, "Error flushing"));
         }
     }
 
@@ -233,7 +233,7 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
         private ByteBuf clientPrefaceString;
         private boolean prefaceSent;
 
-        public PrefaceDecoder(ChannelHandlerContext ctx) {
+        public PrefaceDecoder(ChannelHandlerContext ctx) throws Exception {
             clientPrefaceString = clientPrefaceString(encoder.connection());
             // This handler was just added to the context. In case it was handled after
             // the connection became active, send the connection preface now.
@@ -254,7 +254,7 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
                     byteDecoder.decode(ctx, in, out);
                 }
             } catch (Throwable e) {
-                onError(ctx, e);
+                onError(ctx, false, e);
             }
         }
 
@@ -357,7 +357,7 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
         /**
          * Sends the HTTP/2 connection preface upon establishment of the connection, if not already sent.
          */
-        private void sendPreface(ChannelHandlerContext ctx) {
+        private void sendPreface(ChannelHandlerContext ctx) throws Exception {
             if (prefaceSent || !ctx.channel().isActive()) {
                 return;
             }
@@ -375,8 +375,10 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
                     ChannelFutureListener.CLOSE_ON_FAILURE);
 
             if (isClient) {
-                ctx.fireUserEventTriggered(
-                        Http2ConnectionPrefaceAndSettingsFrameWrittenEvent.INSTANCE);
+                // If this handler is extended by the user and we directly fire the userEvent from this context then
+                // the user will not see the event. We should fire the event starting with this handler so this class
+                // (and extending classes) have a chance to process the event.
+                userEventTriggered(ctx, Http2ConnectionPrefaceAndSettingsFrameWrittenEvent.INSTANCE);
             }
         }
     }
@@ -387,7 +389,7 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
             try {
                 decoder.decodeFrame(ctx, in, out);
             } catch (Throwable e) {
-                onError(ctx, e);
+                onError(ctx, false, e);
             }
         }
     }
@@ -525,8 +527,18 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
         }
     }
 
-    void channelReadComplete0(ChannelHandlerContext ctx) throws Exception {
-        super.channelReadComplete(ctx);
+    final void channelReadComplete0(ChannelHandlerContext ctx) {
+        // Discard bytes of the cumulation buffer if needed.
+        discardSomeReadBytes();
+
+        // Ensure we never stale the HTTP/2 Channel. Flow-control is enforced by HTTP/2.
+        //
+        // See https://tools.ietf.org/html/rfc7540#section-5.2.2
+        if (!ctx.channel().config().isAutoRead()) {
+            ctx.read();
+        }
+
+        ctx.fireChannelReadComplete();
     }
 
     /**
@@ -536,7 +548,7 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
         if (getEmbeddedHttp2Exception(cause) != null) {
             // Some exception in the causality chain is an Http2Exception - handle it.
-            onError(ctx, cause);
+            onError(ctx, false, cause);
         } else {
             super.exceptionCaught(ctx, cause);
         }
@@ -602,17 +614,17 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
      * Central handler for all exceptions caught during HTTP/2 processing.
      */
     @Override
-    public void onError(ChannelHandlerContext ctx, Throwable cause) {
+    public void onError(ChannelHandlerContext ctx, boolean outbound, Throwable cause) {
         Http2Exception embedded = getEmbeddedHttp2Exception(cause);
         if (isStreamError(embedded)) {
-            onStreamError(ctx, cause, (StreamException) embedded);
+            onStreamError(ctx, outbound, cause, (StreamException) embedded);
         } else if (embedded instanceof CompositeStreamException) {
             CompositeStreamException compositException = (CompositeStreamException) embedded;
             for (StreamException streamException : compositException) {
-                onStreamError(ctx, cause, streamException);
+                onStreamError(ctx, outbound, cause, streamException);
             }
         } else {
-            onConnectionError(ctx, cause, embedded);
+            onConnectionError(ctx, outbound, cause, embedded);
         }
         ctx.flush();
     }
@@ -631,11 +643,13 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
      * streams are closed, the connection is shut down.
      *
      * @param ctx the channel context
+     * @param outbound {@code true} if the error was caused by an outbound operation.
      * @param cause the exception that was caught
      * @param http2Ex the {@link Http2Exception} that is embedded in the causality chain. This may
      *            be {@code null} if it's an unknown exception.
      */
-    protected void onConnectionError(ChannelHandlerContext ctx, Throwable cause, Http2Exception http2Ex) {
+    protected void onConnectionError(ChannelHandlerContext ctx, boolean outbound,
+                                     Throwable cause, Http2Exception http2Ex) {
         if (http2Ex == null) {
             http2Ex = new Http2Exception(INTERNAL_ERROR, cause.getMessage(), cause);
         }
@@ -657,11 +671,12 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
      * stream.
      *
      * @param ctx the channel context
+     * @param outbound {@code true} if the error was caused by an outbound operation.
      * @param cause the exception that was caught
      * @param http2Ex the {@link StreamException} that is embedded in the causality chain.
      */
-    protected void onStreamError(ChannelHandlerContext ctx, @SuppressWarnings("unused") Throwable cause,
-                                 StreamException http2Ex) {
+    protected void onStreamError(ChannelHandlerContext ctx, boolean outbound,
+                                 @SuppressWarnings("unused") Throwable cause, StreamException http2Ex) {
         final int streamId = http2Ex.streamId();
         Http2Stream stream = connection().stream(streamId);
 
@@ -690,13 +705,15 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
                 try {
                     handleServerHeaderDecodeSizeError(ctx, stream);
                 } catch (Throwable cause2) {
-                    onError(ctx, connectionError(INTERNAL_ERROR, cause2, "Error DecodeSizeError"));
+                    onError(ctx, outbound, connectionError(INTERNAL_ERROR, cause2, "Error DecodeSizeError"));
                 }
             }
         }
 
         if (stream == null) {
-            resetUnknownStream(ctx, streamId, http2Ex.error().code(), ctx.newPromise());
+            if (!outbound || connection().local().mayHaveCreatedStream(streamId)) {
+                resetUnknownStream(ctx, streamId, http2Ex.error().code(), ctx.newPromise());
+            }
         } else {
             resetStream(ctx, stream, http2Ex.error().code(), ctx.newPromise());
         }
@@ -787,47 +804,37 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
     @Override
     public ChannelFuture goAway(final ChannelHandlerContext ctx, final int lastStreamId, final long errorCode,
                                 final ByteBuf debugData, ChannelPromise promise) {
+        promise = promise.unvoid();
+        final Http2Connection connection = connection();
         try {
-            promise = promise.unvoid();
-            final Http2Connection connection = connection();
-            if (connection().goAwaySent()) {
-                // Protect against re-entrancy. Could happen if writing the frame fails, and error handling
-                // treating this is a connection handler and doing a graceful shutdown...
-                if (lastStreamId == connection().remote().lastStreamKnownByPeer()) {
-                    // Release the data and notify the promise
-                    debugData.release();
-                    return promise.setSuccess();
-                }
-                if (lastStreamId > connection.remote().lastStreamKnownByPeer()) {
-                    throw connectionError(PROTOCOL_ERROR, "Last stream identifier must not increase between " +
-                                                          "sending multiple GOAWAY frames (was '%d', is '%d').",
-                                          connection.remote().lastStreamKnownByPeer(), lastStreamId);
-                }
+            if (!connection.goAwaySent(lastStreamId, errorCode, debugData)) {
+                debugData.release();
+                promise.trySuccess();
+                return promise;
             }
-
-            connection.goAwaySent(lastStreamId, errorCode, debugData);
-
-            // Need to retain before we write the buffer because if we do it after the refCnt could already be 0 and
-            // result in an IllegalRefCountException.
-            debugData.retain();
-            ChannelFuture future = frameWriter().writeGoAway(ctx, lastStreamId, errorCode, debugData, promise);
-
-            if (future.isDone()) {
-                processGoAwayWriteResult(ctx, lastStreamId, errorCode, debugData, future);
-            } else {
-                future.addListener(new ChannelFutureListener() {
-                    @Override
-                    public void operationComplete(ChannelFuture future) throws Exception {
-                        processGoAwayWriteResult(ctx, lastStreamId, errorCode, debugData, future);
-                    }
-                });
-            }
-
-            return future;
-        } catch (Throwable cause) { // Make sure to catch Throwable because we are doing a retain() in this method.
+        } catch (Throwable cause) {
             debugData.release();
-            return promise.setFailure(cause);
+            promise.tryFailure(cause);
+            return promise;
         }
+
+        // Need to retain before we write the buffer because if we do it after the refCnt could already be 0 and
+        // result in an IllegalRefCountException.
+        debugData.retain();
+        ChannelFuture future = frameWriter().writeGoAway(ctx, lastStreamId, errorCode, debugData, promise);
+
+        if (future.isDone()) {
+            processGoAwayWriteResult(ctx, lastStreamId, errorCode, debugData, future);
+        } else {
+            future.addListener(new ChannelFutureListener() {
+                @Override
+                public void operationComplete(ChannelFuture future) throws Exception {
+                    processGoAwayWriteResult(ctx, lastStreamId, errorCode, debugData, future);
+                }
+            });
+        }
+
+        return future;
     }
 
     /**
@@ -865,13 +872,13 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
             closeStream(stream, future);
         } else {
             // The connection will be closed and so no need to change the resetSent flag to false.
-            onConnectionError(ctx, future.cause(), null);
+            onConnectionError(ctx, true, future.cause(), null);
         }
     }
 
     private void closeConnectionOnError(ChannelHandlerContext ctx, ChannelFuture future) {
         if (!future.isSuccess()) {
-            onConnectionError(ctx, future.cause(), null);
+            onConnectionError(ctx, true, future.cause(), null);
         }
     }
 

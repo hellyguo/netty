@@ -26,15 +26,16 @@ import io.netty.util.internal.UnstableApi;
 import java.util.Map;
 
 import static io.netty.channel.kqueue.KQueueChannelOption.RCV_ALLOC_TRANSPORT_PROVIDES_GUESS;
+import static io.netty.channel.unix.Limits.SSIZE_MAX;
+import static java.lang.Math.min;
 
 @UnstableApi
 public class KQueueChannelConfig extends DefaultChannelConfig {
-    final AbstractKQueueChannel channel;
     private volatile boolean transportProvidesGuess;
+    private volatile long maxBytesPerGatheringWrite = SSIZE_MAX;
 
     KQueueChannelConfig(AbstractKQueueChannel channel) {
         super(channel);
-        this.channel = channel;
     }
 
     @Override
@@ -151,6 +152,14 @@ public class KQueueChannelConfig extends DefaultChannelConfig {
 
     @Override
     protected final void autoReadCleared() {
-        channel.clearReadFilter();
+        ((AbstractKQueueChannel) channel).clearReadFilter();
+    }
+
+    final void setMaxBytesPerGatheringWrite(long maxBytesPerGatheringWrite) {
+        this.maxBytesPerGatheringWrite = min(SSIZE_MAX, maxBytesPerGatheringWrite);
+    }
+
+    final long getMaxBytesPerGatheringWrite() {
+        return maxBytesPerGatheringWrite;
     }
 }
