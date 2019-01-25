@@ -31,7 +31,8 @@ import java.security.PrivilegedAction;
 import static io.netty.util.internal.ObjectUtil.checkNotNull;
 
 /**
- * The {@link PlatformDependent} operations which requires access to {@code sun.misc.*}.
+ * The {@link PlatformDependent} operations which requires access to {@code sun.misc.*}.<br>
+ * 使用{@code sun.misc.*}的部分，抽取到这里
  */
 final class PlatformDependent0 {
 
@@ -51,13 +52,15 @@ final class PlatformDependent0 {
     static final Unsafe UNSAFE;
 
     // constants borrowed from murmur3
+    //见于github.com smhasher
     static final int HASH_CODE_ASCII_SEED = 0xc2b2ae35;
     static final int HASH_CODE_C1 = 0xcc9e2d51;
     static final int HASH_CODE_C2 = 0x1b873593;
 
     /**
      * Limits the number of bytes to copy per {@link Unsafe#copyMemory(long, long, long)} to allow safepoint polling
-     * during a large copy.
+     * during a large copy.<br>
+     * 限制大内存拷贝时每次拷贝的大小
      */
     private static final long UNSAFE_COPY_THRESHOLD = 1024L * 1024L;
 

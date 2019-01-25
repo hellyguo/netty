@@ -113,14 +113,14 @@ public final class PlatformDependent {
     };
 
     static {
-        if (javaVersion() >= 7) {
+        if (javaVersion() >= 7) {//1.7+使用JDK自带的
             RANDOM_PROVIDER = new ThreadLocalRandomProvider() {
                 @Override
                 public Random current() {
                     return java.util.concurrent.ThreadLocalRandom.current();
                 }
             };
-        } else {
+        } else {//否则使用Netty加强的
             RANDOM_PROVIDER = new ThreadLocalRandomProvider() {
                 @Override
                 public Random current() {

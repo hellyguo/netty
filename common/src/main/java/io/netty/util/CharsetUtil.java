@@ -111,13 +111,14 @@ public final class CharsetUtil {
     public static CharsetEncoder encoder(Charset charset) {
         checkNotNull(charset, "charset");
 
-        Map<Charset, CharsetEncoder> map = InternalThreadLocalMap.get().charsetEncoderCache();
+        Map<Charset, CharsetEncoder> map = InternalThreadLocalMap.get().charsetEncoderCache();//高消耗资源，缓存使用
         CharsetEncoder e = map.get(charset);
-        if (e != null) {
+        if (e != null) {//存在缓存
             e.reset().onMalformedInput(CodingErrorAction.REPLACE).onUnmappableCharacter(CodingErrorAction.REPLACE);
             return e;
         }
 
+        //不存在缓存，生成后缓存
         e = encoder(charset, CodingErrorAction.REPLACE, CodingErrorAction.REPLACE);
         map.put(charset, e);
         return e;
@@ -167,13 +168,14 @@ public final class CharsetUtil {
     public static CharsetDecoder decoder(Charset charset) {
         checkNotNull(charset, "charset");
 
-        Map<Charset, CharsetDecoder> map = InternalThreadLocalMap.get().charsetDecoderCache();
+        Map<Charset, CharsetDecoder> map = InternalThreadLocalMap.get().charsetDecoderCache();//高消耗资源，缓存使用
         CharsetDecoder d = map.get(charset);
-        if (d != null) {
+        if (d != null) {//存在缓存
             d.reset().onMalformedInput(CodingErrorAction.REPLACE).onUnmappableCharacter(CodingErrorAction.REPLACE);
             return d;
         }
 
+        //不存在缓存，生成后缓存
         d = decoder(charset, CodingErrorAction.REPLACE, CodingErrorAction.REPLACE);
         map.put(charset, d);
         return d;
