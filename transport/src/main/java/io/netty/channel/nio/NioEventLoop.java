@@ -19,6 +19,7 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelException;
 import io.netty.channel.EventLoop;
 import io.netty.channel.EventLoopException;
+import io.netty.channel.EventLoopTaskQueueFactory;
 import io.netty.channel.SelectStrategy;
 import io.netty.channel.SingleThreadEventLoop;
 import io.netty.util.IntSupplier;
@@ -59,7 +60,7 @@ public final class NioEventLoop extends SingleThreadEventLoop {
 
     private static final int CLEANUP_INTERVAL = 256; // XXX Hard-coded value, but won't need customization.
 
-    private static final boolean DISABLE_KEYSET_OPTIMIZATION =
+    private static final boolean DISABLE_KEY_SET_OPTIMIZATION =
             SystemPropertyUtil.getBoolean("io.netty.noKeySetOptimization", false);
 
     private static final int MIN_PREMATURE_SELECTOR_RETURNS = 3;
@@ -79,8 +80,8 @@ public final class NioEventLoop extends SingleThreadEventLoop {
     // - https://github.com/netty/netty/issues/203
     static {
         final String key = "sun.nio.ch.bugLevel";
-        final String buglevel = SystemPropertyUtil.get(key);
-        if (buglevel == null) {
+        final String bugLevel = SystemPropertyUtil.get(key);
+        if (bugLevel == null) {
             try {
                 AccessController.doPrivileged(new PrivilegedAction<Void>() {
                     @Override
@@ -102,7 +103,7 @@ public final class NioEventLoop extends SingleThreadEventLoop {
         SELECTOR_AUTO_REBUILD_THRESHOLD = selectorAutoRebuildThreshold;
 
         if (logger.isDebugEnabled()) {
-            logger.debug("-Dio.netty.noKeySetOptimization: {}", DISABLE_KEYSET_OPTIMIZATION);
+            logger.debug("-Dio.netty.noKeySetOptimization: {}", DISABLE_KEY_SET_OPTIMIZATION);
             logger.debug("-Dio.netty.selectorAutoRebuildThreshold: {}", SELECTOR_AUTO_REBUILD_THRESHOLD);
         }
     }
@@ -123,6 +124,7 @@ public final class NioEventLoop extends SingleThreadEventLoop {
      * waken up.
      */
     private final AtomicBoolean wakenUp = new AtomicBoolean();
+    private volatile long nextWakeupTime = Long.MAX_VALUE;
 
     private final SelectStrategy selectStrategy;
 
@@ -131,8 +133,10 @@ public final class NioEventLoop extends SingleThreadEventLoop {
     private boolean needsToSelectAgain;
 
     NioEventLoop(NioEventLoopGroup parent, Executor executor, SelectorProvider selectorProvider,
-                 SelectStrategy strategy, RejectedExecutionHandler rejectedExecutionHandler) {
-        super(parent, executor, false, DEFAULT_MAX_PENDING_TASKS, rejectedExecutionHandler);
+                 SelectStrategy strategy, RejectedExecutionHandler rejectedExecutionHandler,
+                 EventLoopTaskQueueFactory queueFactory) {
+        super(parent, executor, false, newTaskQueue(queueFactory), newTaskQueue(queueFactory),
+                rejectedExecutionHandler);
         if (selectorProvider == null) {
             throw new NullPointerException("selectorProvider");
         }
@@ -144,6 +148,14 @@ public final class NioEventLoop extends SingleThreadEventLoop {
         selector = selectorTuple.selector;
         unwrappedSelector = selectorTuple.unwrappedSelector;
         selectStrategy = strategy;
+    }
+
+    private static Queue<Runnable> newTaskQueue(
+            EventLoopTaskQueueFactory queueFactory) {
+        if (queueFactory == null) {
+            return newTaskQueue0(DEFAULT_MAX_PENDING_TASKS);
+        }
+        return queueFactory.newTaskQueue(DEFAULT_MAX_PENDING_TASKS);
     }
 
     private static final class SelectorTuple {
@@ -169,7 +181,7 @@ public final class NioEventLoop extends SingleThreadEventLoop {
             throw new ChannelException("failed to open a new selector", e);
         }
 
-        if (DISABLE_KEYSET_OPTIMIZATION) {
+        if (DISABLE_KEY_SET_OPTIMIZATION) {
             return new SelectorTuple(unwrappedSelector);
         }
 
@@ -265,9 +277,13 @@ public final class NioEventLoop extends SingleThreadEventLoop {
 
     @Override
     protected Queue<Runnable> newTaskQueue(int maxPendingTasks) {
+        return newTaskQueue0(maxPendingTasks);
+    }
+
+    private static Queue<Runnable> newTaskQueue0(int maxPendingTasks) {
         // This event loop never calls takeTask()
         return maxPendingTasks == Integer.MAX_VALUE ? PlatformDependent.<Runnable>newMpscQueue()
-                                                    : PlatformDependent.<Runnable>newMpscQueue(maxPendingTasks);
+                : PlatformDependent.<Runnable>newMpscQueue(maxPendingTasks);
     }
 
     /**
@@ -329,8 +345,10 @@ public final class NioEventLoop extends SingleThreadEventLoop {
     }
 
     /**
-     * Sets the percentage of the desired amount of time spent for I/O in the event loop.  The default value is
-     * {@code 50}, which means the event loop will try to spend the same amount of time for I/O as for non-I/O tasks.
+     * Sets the percentage of the desired amount of time spent for I/O in the event loop. Value range from 1-100.
+     * The default value is {@code 50}, which means the event loop will try to spend the same amount of time for I/O
+     * as for non-I/O tasks. The lower the number the more time can be spent on non-I/O tasks. If value set to
+     * {@code 100}, this feature will be disabled and event loop will not attempt to balance I/O and non-I/O tasks.
      */
     public void setIoRatio(int ioRatio) {
         if (ioRatio <= 0 || ioRatio > 100) {
@@ -354,6 +372,11 @@ public final class NioEventLoop extends SingleThreadEventLoop {
             return;
         }
         rebuildSelector0();
+    }
+
+    @Override
+    public int registeredChannels() {
+        return selector.keys().size() - cancelledKeys;
     }
 
     private void rebuildSelector0() {
@@ -741,6 +764,16 @@ public final class NioEventLoop extends SingleThreadEventLoop {
         }
     }
 
+    @Override
+    protected boolean beforeScheduledTaskSubmitted(long deadlineNanos) {
+        return deadlineNanos < nextWakeupTime;
+    }
+
+    @Override
+    protected boolean afterScheduledTaskSubmitted(long deadlineNanos) {
+        return deadlineNanos < nextWakeupTime;
+    }
+
     Selector unwrappedSelector() {
         return unwrappedSelector;
     }
@@ -762,6 +795,11 @@ public final class NioEventLoop extends SingleThreadEventLoop {
             int selectCnt = 0;
             long currentTimeNanos = System.nanoTime();
             long selectDeadLineNanos = currentTimeNanos + delayNanos(currentTimeNanos);
+
+            long normalizedDeadlineNanos = selectDeadLineNanos - initialNanoTime();
+            if (nextWakeupTime != normalizedDeadlineNanos) {
+                nextWakeupTime = normalizedDeadlineNanos;
+            }
 
             for (;;) {
                 long timeoutMillis = (selectDeadLineNanos - currentTimeNanos + 500000L) / 1000000L;

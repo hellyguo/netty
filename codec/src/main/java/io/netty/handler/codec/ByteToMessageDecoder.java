@@ -15,10 +15,13 @@
  */
 package io.netty.handler.codec;
 
+import static io.netty.util.internal.ObjectUtil.checkPositive;
+
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.CompositeByteBuf;
 import io.netty.buffer.Unpooled;
+import io.netty.channel.ChannelConfig;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.socket.ChannelInputShutdownEvent;
@@ -134,7 +137,7 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
                 return buffer;
             } finally {
                 if (in != null) {
-                    // We must release if the ownership was not transfered as otherwise it may produce a leak if
+                    // We must release if the ownership was not transferred as otherwise it may produce a leak if
                     // writeBytes(...) throw for whatever release (for example because of OutOfMemoryError).
                     in.release();
                 }
@@ -149,8 +152,14 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
     ByteBuf cumulation;
     private Cumulator cumulator = MERGE_CUMULATOR;
     private boolean singleDecode;
-    private boolean decodeWasNull;
     private boolean first;
+
+    /**
+     * This flag is used to determine if we need to call {@link ChannelHandlerContext#read()} to consume more data
+     * when {@link ChannelConfig#isAutoRead()} is {@code false}.
+     */
+    private boolean firedChannelRead;
+
     /**
      * A bitmask where the bits are defined as
      * <ul>
@@ -202,9 +211,7 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
      * The default is {@code 16}.
      */
     public void setDiscardAfterReads(int discardAfterReads) {
-        if (discardAfterReads <= 0) {
-            throw new IllegalArgumentException("discardAfterReads must be > 0");
-        }
+        checkPositive(discardAfterReads, "discardAfterReads");
         this.discardAfterReads = discardAfterReads;
     }
 
@@ -241,18 +248,16 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
         if (buf != null) {
             // Directly set this to null so we are sure we not access it in any other method here anymore.
             cumulation = null;
-
+            numReads = 0;
             int readable = buf.readableBytes();
             if (readable > 0) {
                 ByteBuf bytes = buf.readBytes(readable);
                 buf.release();
                 ctx.fireChannelRead(bytes);
+                ctx.fireChannelReadComplete();
             } else {
                 buf.release();
             }
-
-            numReads = 0;
-            ctx.fireChannelReadComplete();
         }
         handlerRemoved0(ctx);
     }
@@ -293,7 +298,7 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
                 }
 
                 int size = out.size();
-                decodeWasNull = !out.insertSinceRecycled();
+                firedChannelRead |= out.insertSinceRecycled();
                 fireChannelRead(ctx, out, size);
                 out.recycle();
             }
@@ -328,12 +333,10 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
     public void channelReadComplete(ChannelHandlerContext ctx) throws Exception {
         numReads = 0;
         discardSomeReadBytes();
-        if (decodeWasNull) {
-            decodeWasNull = false;
-            if (!ctx.channel().config().isAutoRead()) {
-                ctx.read();
-            }
+        if (!firedChannelRead && !ctx.channel().config().isAutoRead()) {
+            ctx.read();
         }
+        firedChannelRead = false;
         ctx.fireChannelReadComplete();
     }
 

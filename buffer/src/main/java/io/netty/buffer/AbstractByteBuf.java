@@ -38,6 +38,7 @@ import java.nio.channels.ScatteringByteChannel;
 import java.nio.charset.Charset;
 
 import static io.netty.util.internal.MathUtil.isOutOfBounds;
+import static io.netty.util.internal.ObjectUtil.checkPositiveOrZero;
 
 /**
  * A skeletal implementation of a buffer.
@@ -73,9 +74,7 @@ public abstract class AbstractByteBuf extends ByteBuf {
     private int maxCapacity;
 
     protected AbstractByteBuf(int maxCapacity) {
-        if (maxCapacity < 0) {
-            throw new IllegalArgumentException("maxCapacity: " + maxCapacity + " (expected: >= 0)");
-        }
+        checkPositiveOrZero(maxCapacity, "maxCapacity");
         this.maxCapacity = maxCapacity;
     }
 
@@ -269,12 +268,16 @@ public abstract class AbstractByteBuf extends ByteBuf {
         }
     }
 
+    // Called after a capacity reduction
+    protected final void trimIndicesToCapacity(int newCapacity) {
+        if (writerIndex() > newCapacity) {
+            setIndex0(Math.min(readerIndex(), newCapacity), newCapacity);
+        }
+    }
+
     @Override
     public ByteBuf ensureWritable(int minWritableBytes) {
-        if (minWritableBytes < 0) {
-            throw new IllegalArgumentException(String.format(
-                    "minWritableBytes: %d (expected: >= 0)", minWritableBytes));
-        }
+        checkPositiveOrZero(minWritableBytes, "minWritableBytes");
         ensureWritable0(minWritableBytes);
         return this;
     }
@@ -284,6 +287,7 @@ public abstract class AbstractByteBuf extends ByteBuf {
         if (minWritableBytes <= writableBytes()) {
             return;
         }
+        final int writerIndex = writerIndex();
         if (checkBounds) {
             if (minWritableBytes > maxCapacity - writerIndex) {
                 throw new IndexOutOfBoundsException(String.format(
@@ -293,7 +297,14 @@ public abstract class AbstractByteBuf extends ByteBuf {
         }
 
         // Normalize the current capacity to the power of 2.
-        int newCapacity = alloc().calculateNewCapacity(writerIndex + minWritableBytes, maxCapacity);
+        int minNewCapacity = writerIndex + minWritableBytes;
+        int newCapacity = alloc().calculateNewCapacity(minNewCapacity, maxCapacity);
+
+        int fastCapacity = writerIndex + maxFastWritableBytes();
+        // Grow by a smaller amount if it will avoid reallocation
+        if (newCapacity > fastCapacity && minNewCapacity <= fastCapacity) {
+            newCapacity = fastCapacity;
+        }
 
         // Adjust to the new capacity.
         capacity(newCapacity);
@@ -302,10 +313,7 @@ public abstract class AbstractByteBuf extends ByteBuf {
     @Override
     public int ensureWritable(int minWritableBytes, boolean force) {
         ensureAccessible();
-        if (minWritableBytes < 0) {
-            throw new IllegalArgumentException(String.format(
-                    "minWritableBytes: %d (expected: >= 0)", minWritableBytes));
-        }
+        checkPositiveOrZero(minWritableBytes, "minWritableBytes");
 
         if (minWritableBytes <= writableBytes()) {
             return 0;
@@ -323,7 +331,14 @@ public abstract class AbstractByteBuf extends ByteBuf {
         }
 
         // Normalize the current capacity to the power of 2.
-        int newCapacity = alloc().calculateNewCapacity(writerIndex + minWritableBytes, maxCapacity);
+        int minNewCapacity = writerIndex + minWritableBytes;
+        int newCapacity = alloc().calculateNewCapacity(minNewCapacity, maxCapacity);
+
+        int fastCapacity = writerIndex + maxFastWritableBytes();
+        // Grow by a smaller amount if it will avoid reallocation
+        if (newCapacity > fastCapacity && minNewCapacity <= fastCapacity) {
+            newCapacity = fastCapacity;
+        }
 
         // Adjust to the new capacity.
         capacity(newCapacity);
@@ -1248,7 +1263,44 @@ public abstract class AbstractByteBuf extends ByteBuf {
 
     @Override
     public int indexOf(int fromIndex, int toIndex, byte value) {
-        return ByteBufUtil.indexOf(this, fromIndex, toIndex, value);
+        if (fromIndex <= toIndex) {
+            return firstIndexOf(fromIndex, toIndex, value);
+        } else {
+            return lastIndexOf(fromIndex, toIndex, value);
+        }
+    }
+
+    private int firstIndexOf(int fromIndex, int toIndex, byte value) {
+        fromIndex = Math.max(fromIndex, 0);
+        if (fromIndex >= toIndex || capacity() == 0) {
+            return -1;
+        }
+        checkIndex(fromIndex, toIndex - fromIndex);
+
+        for (int i = fromIndex; i < toIndex; i ++) {
+            if (_getByte(i) == value) {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private int lastIndexOf(int fromIndex, int toIndex, byte value) {
+        fromIndex = Math.min(fromIndex, capacity());
+        if (fromIndex < 0 || capacity() == 0) {
+            return -1;
+        }
+
+        checkIndex(toIndex, fromIndex - toIndex);
+
+        for (int i = fromIndex - 1; i >= toIndex; i --) {
+            if (_getByte(i) == value) {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     @Override
@@ -1381,30 +1433,38 @@ public abstract class AbstractByteBuf extends ByteBuf {
         checkIndex0(index, fieldLength);
     }
 
-    private static void checkRangeBounds(final int index, final int fieldLength, final int capacity) {
+    private static void checkRangeBounds(final String indexName, final int index,
+            final int fieldLength, final int capacity) {
         if (isOutOfBounds(index, fieldLength, capacity)) {
             throw new IndexOutOfBoundsException(String.format(
-                    "index: %d, length: %d (expected: range(0, %d))", index, fieldLength, capacity));
+                    "%s: %d, length: %d (expected: range(0, %d))", indexName, index, fieldLength, capacity));
         }
     }
 
     final void checkIndex0(int index, int fieldLength) {
         if (checkBounds) {
-            checkRangeBounds(index, fieldLength, capacity());
+            checkRangeBounds("index", index, fieldLength, capacity());
         }
     }
 
     protected final void checkSrcIndex(int index, int length, int srcIndex, int srcCapacity) {
         checkIndex(index, length);
         if (checkBounds) {
-            checkRangeBounds(srcIndex, length, srcCapacity);
+            checkRangeBounds("srcIndex", srcIndex, length, srcCapacity);
         }
     }
 
     protected final void checkDstIndex(int index, int length, int dstIndex, int dstCapacity) {
         checkIndex(index, length);
         if (checkBounds) {
-            checkRangeBounds(dstIndex, length, dstCapacity);
+            checkRangeBounds("dstIndex", dstIndex, length, dstCapacity);
+        }
+    }
+
+    protected final void checkDstIndex(int length, int dstIndex, int dstCapacity) {
+        checkReadableBytes(length);
+        if (checkBounds) {
+            checkRangeBounds("dstIndex", dstIndex, length, dstCapacity);
         }
     }
 
@@ -1414,9 +1474,7 @@ public abstract class AbstractByteBuf extends ByteBuf {
      * than the specified value.
      */
     protected final void checkReadableBytes(int minimumReadableBytes) {
-        if (minimumReadableBytes < 0) {
-            throw new IllegalArgumentException("minimumReadableBytes: " + minimumReadableBytes + " (expected: >= 0)");
-        }
+        checkPositiveOrZero(minimumReadableBytes, "minimumReadableBytes");
         checkReadableBytes0(minimumReadableBytes);
     }
 
@@ -1446,17 +1504,9 @@ public abstract class AbstractByteBuf extends ByteBuf {
      * if the buffer was released before.
      */
     protected final void ensureAccessible() {
-        if (checkAccessible && internalRefCnt() == 0) {
+        if (checkAccessible && !isAccessible()) {
             throw new IllegalReferenceCountException(0);
         }
-    }
-
-    /**
-     * Returns the reference count that is used internally by {@link #ensureAccessible()} to try to guard
-     * against using the buffer after it was released (best-effort).
-     */
-    int internalRefCnt() {
-        return refCnt();
     }
 
     final void setIndex0(int readerIndex, int writerIndex) {

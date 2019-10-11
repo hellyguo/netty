@@ -397,6 +397,7 @@ public abstract class Recycler<T> {
                     return false;
                 }
                 this.head.link = head = head.next;
+                this.head.reclaimSpace(LINK_CAPACITY);
             }
 
             final int srcStart = head.readIndex;//未读起点
@@ -523,6 +524,10 @@ public abstract class Recycler<T> {
                 }
                 //回收成功，更新空闲大小
                 size = this.size;
+                if (size <= 0) {
+                    // double check, avoid races
+                    return null;
+                }
             }
             size --;//分配，数量减一。同时该值也作为分配下标。
             DefaultHandle ret = elements[size];

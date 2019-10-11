@@ -20,13 +20,17 @@
   <parent>
     <groupId>io.netty</groupId>
     <artifactId>netty-parent</artifactId>
-    <version>4.1.33.Final-SNAPSHOT</version>
+    <version>4.1.43.Final-SNAPSHOT</version>
   </parent>
 
   <artifactId>netty-testsuite-autobahn</artifactId>
   <packaging>jar</packaging>
 
   <name>Netty/Testsuite/Autobahn</name>
+
+  <properties>
+    <skipJapicmp>true</skipJapicmp>
+  </properties>
 
   <dependencies>
     <dependency>

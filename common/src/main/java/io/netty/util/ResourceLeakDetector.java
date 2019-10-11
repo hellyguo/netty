@@ -321,7 +321,7 @@ public class ResourceLeakDetector<T> {
     protected void reportTracedLeak(String resourceType, String records) {
         logger.error(
                 "LEAK: {}.release() was not called before it's garbage-collected. " +
-                "See http://netty.io/wiki/reference-counted-objects.html for more information.{}",
+                "See https://netty.io/wiki/reference-counted-objects.html for more information.{}",
                 resourceType, records);
     }
 
@@ -334,7 +334,7 @@ public class ResourceLeakDetector<T> {
                 "Enable advanced leak reporting to find out where the leak occurred. " +
                 "To enable advanced leak reporting, " +
                 "specify the JVM option '-D{}={}' or call {}.setLevel() " +
-                "See http://netty.io/wiki/reference-counted-objects.html for more information.",
+                "See https://netty.io/wiki/reference-counted-objects.html for more information.",
                 resourceType, PROP_LEVEL, Level.ADVANCED.name().toLowerCase(), simpleClassName(this));
     }
 
@@ -504,8 +504,9 @@ public class ResourceLeakDetector<T> {
          */
         private static void reachabilityFence0(Object ref) {
             if (ref != null) {
-                // Empty synchronized is ok: https://stackoverflow.com/a/31933260/1151521
-                synchronized (ref) { }
+                synchronized (ref) {
+                    // Empty synchronized is ok: https://stackoverflow.com/a/31933260/1151521
+                }
             }
         }
 
